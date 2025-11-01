@@ -1,0 +1,48 @@
+{
+    "_id": {
+        "$oid": "6813403de88d439cdca7b7e3"
+    },
+    "user_name": "ravi kumar",
+    "mobile_number": "9247872691",
+    "otp_record": {
+        "otp": "567850",
+        "created_at": {
+            "$date": {
+                "$numberLong": "1746094711229"
+            }
+        },
+        "is_verified": true,
+        "_id": {
+            "$oid": "68134a773b7c240dda3c30b1"
+        }
+    },
+    "isActive": true,
+    "spaces": [
+        {
+            "space_name": "home",
+            "address": "madhapur",
+            "devices": [],
+            "created_at": {
+                "$date": {
+                    "$numberLong": "1746093734605"
+                }
+            },
+            "_id": {
+                "$oid": "681346a6a0dd3d6c132acd33"
+            }
+        }
+    ],
+    "createdAt": {
+        "$date": {
+            "$numberLong": "1746092093012"
+        }
+    },
+    "updatedAt": {
+        "$date": {
+            "$numberLong": "1746094739612"
+        }
+    },
+    "__v": {
+        "$numberInt": "1"
+    }
+}

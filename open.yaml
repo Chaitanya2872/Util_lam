@@ -1,0 +1,1631 @@
+openapi: 3.0.3
+info:
+  title: IoTIQ API
+  description: API documentation for IoTIQ automation solution for water tank management
+  version: 1.0.0
+  contact:
+    name: IoTIQ Support
+    email: support@iotiq.com
+
+servers:
+  - url: http://localhost:5000
+    description: Development server
+  - url: https://api.iotiq.com
+    description: Production server
+
+tags:
+  - name: Authentication
+    description: Authentication and user management endpoints
+  - name: Spaces
+    description: Endpoints for managing spaces
+  - name: Devices
+    description: Endpoints for managing devices
+  - name: Setup
+    description: Endpoints for managing automation setups
+
+paths:
+  /signin:
+    post:
+      tags:
+        - Authentication
+      summary: Initiate sign-in
+      description: Initiates sign-in process by sending OTP to the user's WhatsApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mobile_number
+              properties:
+                mobile_number:
+                  type: string
+                  description: User's mobile number
+                country_code:
+                  type: string
+                  description: Country code for the mobile number
+                  default: "+91"
+      responses:
+        '200':
+          description: OTP sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: OTP sent to your WhatsApp number
+                  mobile_number:
+                    type: string
+                    example: "1234567890"
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: User not found. Please sign up first.
+                  code:
+                    type: string
+                    example: USER_NOT_FOUND
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Internal server error
+
+  /signin/otp:
+    post:
+      tags:
+        - Authentication
+      summary: Verify sign-in OTP
+      description: Verifies the OTP sent during sign-in and returns authentication tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mobile_number
+                - otp
+              properties:
+                mobile_number:
+                  type: string
+                  description: User's mobile number
+                otp:
+                  type: string
+                  description: One-time password received via WhatsApp
+      responses:
+        '200':
+          description: OTP verified successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Sign in successful
+                  user:
+                    type: object
+                    properties:
+                      user_name:
+                        type: string
+                        example: John Doe
+                      mobile_number:
+                        type: string
+                        example: "1234567890"
+                      user_id:
+                        type: string
+                        example: "60d5ec38f5ee7d1b5c3a3a9b"
+                  tokens:
+                    type: object
+                    properties:
+                      accessToken:
+                        type: string
+                        example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      refreshToken:
+                        type: string
+                        example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Incorrect OTP. Please try again
+                  code:
+                    type: string
+                    example: INCORRECT_OTP
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: User not found
+                  code:
+                    type: string
+                    example: USER_NOT_FOUND
+
+  /signin/resend-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Resend sign-in OTP
+      description: Resends OTP for sign-in to the user's WhatsApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mobile_number
+              properties:
+                mobile_number:
+                  type: string
+                  description: User's mobile number
+                country_code:
+                  type: string
+                  description: Country code for the mobile number
+                  default: "+91"
+      responses:
+        '200':
+          description: OTP resent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: New OTP sent to your WhatsApp number
+                  mobile_number:
+                    type: string
+                    example: "1234567890"
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: User not found. Please sign up first.
+                  code:
+                    type: string
+                    example: USER_NOT_FOUND
+
+  /signup:
+    post:
+      tags:
+        - Authentication
+      summary: Initiate sign-up
+      description: Initiates sign-up process by sending OTP to the user's WhatsApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_name
+                - mobile_number
+              properties:
+                user_name:
+                  type: string
+                  description: User's name
+                mobile_number:
+                  type: string
+                  description: User's mobile number
+                country_code:
+                  type: string
+                  description: Country code for the mobile number
+                  default: "+91"
+      responses:
+        '200':
+          description: OTP sent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: OTP sent to your WhatsApp number for signup verification
+                  mobile_number:
+                    type: string
+                    example: "1234567890"
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: User with this mobile number already exists
+                  code:
+                    type: string
+                    example: USER_EXISTS
+
+  /signup/otp:
+    post:
+      tags:
+        - Authentication
+      summary: Verify sign-up OTP
+      description: Verifies the OTP sent during sign-up and completes registration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mobile_number
+                - otp
+              properties:
+                mobile_number:
+                  type: string
+                  description: User's mobile number
+                otp:
+                  type: string
+                  description: One-time password received via WhatsApp
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Signup successful
+                  user:
+                    type: object
+                    properties:
+                      user_name:
+                        type: string
+                        example: John Doe
+                      mobile_number:
+                        type: string
+                        example: "1234567890"
+                      user_id:
+                        type: string
+                        example: "60d5ec38f5ee7d1b5c3a3a9b"
+                  tokens:
+                    type: object
+                    properties:
+                      accessToken:
+                        type: string
+                        example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      refreshToken:
+                        type: string
+                        example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Incorrect OTP. Please try again.
+                  code:
+                    type: string
+                    example: INCORRECT_OTP
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: User not found. Please initiate signup again.
+                  code:
+                    type: string
+                    example: USER_NOT_FOUND
+
+  /signup/resend-otp:
+    post:
+      tags:
+        - Authentication
+      summary: Resend sign-up OTP
+      description: Resends OTP for sign-up to the user's WhatsApp
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - mobile_number
+              properties:
+                mobile_number:
+                  type: string
+                  description: User's mobile number
+                country_code:
+                  type: string
+                  description: Country code for the mobile number
+                  default: "+91"
+      responses:
+        '200':
+          description: OTP resent successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: New OTP sent to your WhatsApp number for signup verification
+                  mobile_number:
+                    type: string
+                    example: "1234567890"
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: User not found. Please initiate signup again.
+                  code:
+                    type: string
+                    example: USER_NOT_FOUND
+
+  /refresh-token:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Refreshes an expired access token using a valid refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+                  description: Refresh token
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Token refreshed successfully
+                  accessToken:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  accessTokenExpiry:
+                    type: string
+                    format: date-time
+                    example: "2023-07-15T12:00:00.000Z"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Refresh token has expired, please login again
+                  code:
+                    type: string
+                    example: REFRESH_TOKEN_EXPIRED
+
+  /logout:
+    post:
+      tags:
+        - Authentication
+      summary: Logout user
+      description: Logs out the user by invalidating their session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mobile_number:
+                  type: string
+                  description: User's mobile number
+      responses:
+        '200':
+          description: Logged out successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Logout successful
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Mobile number is required for logout
+                  code:
+                    type: string
+                    example: MOBILE_NUMBER_REQUIRED
+
+  /spaces:
+    get:
+      tags:
+        - Spaces
+      summary: Get all spaces
+      description: Retrieves all spaces for the authenticated user
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Retrieved spaces successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Space'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error500'
+
+    post:
+      tags:
+        - Spaces
+      summary: Create a new space
+      description: Creates a new space for the authenticated user
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - space_name
+              properties:
+                space_name:
+                  type: string
+                  description: Name of the space
+                  example: Home
+                address:
+                  type: string
+                  description: Address of the space
+                  example: 123 Main St, City
+      responses:
+        '201':
+          description: Space created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Space created successfully
+                  data:
+                    $ref: '#/components/schemas/Space'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space name is required
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space with name 'Home' already exists for this user
+
+  /spaces/{spaceId}:
+    get:
+      tags:
+        - Spaces
+      summary: Get a specific space
+      description: Retrieves a specific space by ID for the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: spaceId
+          in: path
+          required: true
+          description: ID of the space to retrieve
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Retrieved space successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Space'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space ID is required
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space not found
+
+    put:
+      tags:
+        - Spaces
+      summary: Update a space
+      description: Updates a specific space by ID for the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: spaceId
+          in: path
+          required: true
+          description: ID of the space to update
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                space_name:
+                  type: string
+                  description: Name of the space
+                  example: New Home Name
+                address:
+                  type: string
+                  description: Address of the space
+                  example: 456 New St, City
+      responses:
+        '200':
+          description: Space updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Space updated successfully
+                  data:
+                    $ref: '#/components/schemas/Space'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space ID is required
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space not found
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space with name 'New Home Name' already exists for this user
+
+    delete:
+      tags:
+        - Spaces
+      summary: Delete a space
+      description: Deletes a specific space by ID for the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: spaceId
+          in: path
+          required: true
+          description: ID of the space to delete
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Space deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Space deleted successfully
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Cannot delete the only space. Users must have at least one space.
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space not found
+  
+  /spaces/{spaceId}/devices:
+    get:
+      tags:
+        - Devices
+      summary: Get all devices in a space
+      description: Retrieves all devices in a specific space for the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: spaceId
+          in: path
+          required: true
+          description: ID of the space
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Retrieved devices successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Device'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space ID is required
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space not found
+
+    post:
+      tags:
+        - Devices
+      summary: Add a device to a space
+      description: Adds a new device to a specific space for the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: spaceId
+          in: path
+          required: true
+          description: ID of the space
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - device_id
+                - device_type
+                - device_name
+                - connection_type
+              properties:
+                device_id:
+                  type: string
+                  description: Unique identifier for the device
+                  example: device123
+                device_type:
+                  type: string
+                  description: Type of device
+                  enum: [base, tank]
+                  example: base
+                device_name:
+                  type: string
+                  description: Name of the device
+                  example: Living Room Base
+                connection_type:
+                  type: string
+                  description: Type of connection
+                  enum: [wifi, without_wifi]
+                  example: wifi
+                ssid:
+                  type: string
+                  description: WiFi SSID (required if connection_type is wifi)
+                  example: HomeWiFi
+                password:
+                  type: string
+                  description: WiFi password (required if connection_type is wifi)
+                  example: wifi-password
+                status:
+                  type: string
+                  description: Status for base devices
+                  enum: [on, off]
+                  example: off
+                level:
+                  type: integer
+                  description: Water level for tank devices (0-100)
+                  minimum: 0
+                  maximum: 100
+                  example: 50
+      responses:
+        '201':
+          description: Device added successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Device added successfully
+                  data:
+                    $ref: '#/components/schemas/Device'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Device ID is required
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space not found
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Device with ID 'device123' already exists in this space
+
+  /spaces/{spaceId}/devices/{deviceId}:
+    get:
+      tags:
+        - Devices
+      summary: Get a specific device
+      description: Retrieves a specific device by ID in a space for the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: spaceId
+          in: path
+          required: true
+          description: ID of the space
+          schema:
+            type: string
+        - name: deviceId
+          in: path
+          required: true
+          description: ID of the device
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Retrieved device successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Device'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space ID and Device ID are required
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Device not found
+
+    delete:
+      tags:
+        - Devices
+      summary: Delete a device
+      description: Deletes a specific device by ID in a space for the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: spaceId
+          in: path
+          required: true
+          description: ID of the space
+          schema:
+            type: string
+        - name: deviceId
+          in: path
+          required: true
+          description: ID of the device
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Device deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Device deleted successfully
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space ID and Device ID are required
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Device not found
+
+  /users/{userId}/devices:
+    get:
+      tags:
+        - Devices
+      summary: Get all devices for a user
+      description: Retrieves all devices across all spaces for the authenticated user
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: ID of the user
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Retrieved devices successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Device'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Access denied. You can only access your own devices.
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: User not found
+
+  /spaces/{spaceId}/setup:
+    get:
+      tags:
+        - Setup
+      summary: Get setup configuration
+      description: Retrieves the automation setup configuration for a space
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: spaceId
+          in: path
+          required: true
+          description: ID of the space
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Retrieved setup configuration successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Setup'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space ID is required
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space not found
+
+    post:
+      tags:
+        - Setup
+      summary: Create or update setup configuration
+      description: Creates or updates the automation setup configuration for a space
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: spaceId
+          in: path
+          required: true
+          description: ID of the space
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetupInput'
+      responses:
+        '201':
+          description: Setup configuration created/updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Setup created/updated successfully
+                  data:
+                    $ref: '#/components/schemas/Setup'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Condition is required
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error401'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Space not found
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "60d5ec38f5ee7d1b5c3a3a9b"
+        user_name:
+          type: string
+          example: John Doe
+        mobile_number:
+          type: string
+          example: "1234567890"
+        spaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/Space'
+        otp_record:
+          type: object
+          properties:
+            otp:
+              type: string
+              example: "123456"
+            created_at:
+              type: string
+              format: date-time
+              example: "2023-06-25T10:00:00.000Z"
+            is_verified:
+              type: boolean
+              example: true
+        isActive:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          example: "2023-06-25T10:00:00.000Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2023-06-25T10:00:00.000Z"
+
+    Space:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "60d5ec38f5ee7d1b5c3a3a9b"
+        space_name:
+          type: string
+          example: Home
+        address:
+          type: string
+          example: 123 Main St, City
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/Device'
+        setup:
+          $ref: '#/components/schemas/Setup'
+        created_at:
+          type: string
+          format: date-time
+          example: "2023-06-25T10:00:00.000Z"
+
+    Device:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "60d5ec38f5ee7d1b5c3a3a9b"
+        device_id:
+          type: string
+          example: device123
+        device_type:
+          type: string
+          enum: [base, tank]
+          example: base
+        device_name:
+          type: string
+          example: Living Room Base
+        connection_type:
+          type: string
+          enum: [wifi, without_wifi]
+          example: wifi
+        ssid:
+          type: string
+          example: HomeWiFi
+        password:
+          type: string
+          example: wifi-password
+        status:
+          type: string
+          enum: [on, off]
+          example: off
+          description: Status for base devices
+        level:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 50
+          description: Water level for tank devices (0-100)
+        createdAt:
+          type: string
+          format: date-time
+          example: "2023-06-25T10:00:00.000Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2023-06-25T10:00:00.000Z"
+        space_id:
+          type: string
+          example: "60d5ec38f5ee7d1b5c3a3a9b"
+          description: ID of the space this device belongs to (returned in API responses)
+        space_name:
+          type: string
+          example: Home
+          description: Name of the space this device belongs to (returned in API responses)
+
+    Action:
+      type: object
+      properties:
+        device_id:
+          type: string
+          example: device123
+          description: ID of the base device to control
+        set_status:
+          type: string
+          enum: [on, off]
+          example: on
+          description: Status to set on the base device
+
+    Condition:
+      type: object
+      properties:
+        device_id:
+          type: string
+          example: tank456
+          description: ID of the device to monitor
+        device_type:
+          type: string
+          enum: [base, tank]
+          example: tank
+          description: Type of the device to monitor
+        status:
+          type: string
+          enum: [on, off]
+          example: off
+          description: Status to monitor (for base devices)
+        level:
+          type: integer
+          minimum: 0
+          maximum: 100
+          example: 60
+          description: Water level threshold to monitor (for tank devices)
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Action'
+          description: Actions to perform when the condition is met
+
+    Setup:
+      type: object
+      properties:
+        condition:
+          $ref: '#/components/schemas/Condition'
+
+    SetupInput:
+      type: object
+      required:
+        - condition
+      properties:
+        condition:
+          type: object
+          required:
+            - device_id
+            - device_type
+            - actions
+          properties:
+            device_id:
+              type: string
+              example: tank456
+              description: ID of the device to monitor
+            device_type:
+              type: string
+              enum: [base, tank]
+              example: tank
+              description: Type of the device to monitor
+            status:
+              type: string
+              enum: [on, off]
+              example: off
+              description: Status to monitor (required for base devices)
+            level:
+              type: integer
+              minimum: 0
+              maximum: 100
+              example: 60
+              description: Water level threshold to monitor (required for tank devices)
+            actions:
+              type: array
+              items:
+                type: object
+                required:
+                  - device_id
+                  - set_status
+                properties:
+                  device_id:
+                    type: string
+                    example: device123
+                    description: ID of the base device to control
+                  set_status:
+                    type: string
+                    enum: [on, off]
+                    example: on
+                    description: Status to set on the base device
+
+    Error401:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Authentication required
+        code:
+          type: string
+          example: AUTH_REQUIRED
+
+    Error500:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Internal server error
