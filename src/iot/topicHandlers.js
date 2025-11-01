@@ -256,7 +256,6 @@ export async function handleSlaveResponseMessage(topic, message) {
 
     logger.info(`🔵 Received slave response for base ${baseDeviceId} and tank ${slaveId}`);
 
-    // Find the user with this base device
     const user = await User.findOne({
       "spaces.devices.device_id": baseDeviceId,
     });
@@ -266,7 +265,6 @@ export async function handleSlaveResponseMessage(topic, message) {
       return;
     }
 
-    // Find the base device to get thingid
     let thingId = null;
     let baseDevice = null;
     
@@ -284,23 +282,18 @@ export async function handleSlaveResponseMessage(topic, message) {
       return;
     }
 
-    // ✅ 1. Save the response to device_responses collection
+    // ✅ Save slave response
     try {
-      await saveDeviceResponse(
-        thingId,
-        baseDeviceId,
-        'slave_response',
-        message
-      );
-      logger.info(`✅ Slave response saved to device_responses collection`);
+      await saveDeviceResponse(thingId, baseDeviceId, 'slave_response', message);
+      logger.info(`✅ Slave response saved to device_responses`);
     } catch (saveError) {
       logger.error(`❌ Error saving to device_responses: ${saveError.message}`);
     }
 
-    // ✅ 2. Save to tank_readings collection (for tracking tank connection)
+    // ✅ Save to tank_readings
     try {
       await saveMqttDataToMongo({
-        deviceid: slaveId, // Use the tank/slave device ID
+        deviceid: slaveId,
         sensor_no: sensorNo,
         message_type: 'slave_response',
         timestamp: message.timestamp || new Date(),
@@ -310,26 +303,24 @@ export async function handleSlaveResponseMessage(topic, message) {
         address_h: message.address_h,
         raw_data: message
       });
-      logger.info(`✅ Slave response saved to tank_readings for tank ${slaveId}`);
+      logger.info(`✅ Slave response saved to tank_readings`);
     } catch (saveError) {
-      logger.error(`❌ Error saving slave response to tank_readings: ${saveError.message}`);
+      logger.error(`❌ Error saving to tank_readings: ${saveError.message}`);
     }
 
-    // ✅ 3. Update tank device in MongoDB user document
+    // ✅ Update tank device in user document
     for (const space of user.spaces) {
       const tankDevice = space.devices.find(d => d.device_id === slaveId);
       
       if (tankDevice) {
-        // Update tank connection info
         tankDevice.channel = message.channel || tankDevice.channel;
         tankDevice.address_l = message.address_l || tankDevice.address_l;
         tankDevice.address_h = message.address_h || tankDevice.address_h;
         tankDevice.last_updated = new Date();
         
         await user.save();
-        logger.info(`✅ Tank device ${slaveId} connection info updated in user document`);
+        logger.info(`✅ Tank device ${slaveId} connection info updated`);
         
-        // Create notification
         await createNotification({
           type: "TANK_CONNECTED",
           title: "Tank Device Connected",
@@ -349,19 +340,17 @@ export async function handleSlaveResponseMessage(topic, message) {
       }
     }
 
-    // 🔥 4. REQUEST STATUS UPDATE FROM THE TANK DEVICE
-    // This triggers the device to publish actual sensor readings to update topic
+    // ✅ REQUEST STATUS UPDATE - This triggers the tank to send sensor readings
     logger.info(`🚀 Requesting status update for tank ${slaveId} via sensor ${sensorNo}`);
     
     try {
       const statusRequestTopic = `mqtt/device/${thingId}/status_request`;
       const statusRequestPayload = {
         deviceid: baseDeviceId,
-        sensor_no: sensorNo,  // Request specific sensor data
+        sensor_no: sensorNo,
         requested_at: new Date().toISOString()
       };
       
-      // Publish status request
       publish(statusRequestTopic, statusRequestPayload);
       
       logger.info(`✅ Status request sent to ${statusRequestTopic}`);
@@ -375,6 +364,23 @@ export async function handleSlaveResponseMessage(topic, message) {
     logger.error("Error handling slave response message:", error);
   }
 }
+// ```
+
+// ### 6. **Summary of Complete Flow**
+// ```
+// 1. Backend sends slave_request
+//    ↓
+// 2. Device publishes to $aws/things/{thingId}/slave_response
+//    ↓
+// 3. IoT Rule triggers Lambda → Saves to slave_requests (completed)
+//    ↓
+// 4. Backend receives response, sends status_request
+//    ↓
+// 5. Device publishes to $aws/things/{thingId}/update with sensor data
+//    ↓
+// 6. IoT Rule triggers Lambda → Saves to tank_readings
+//    ↓
+// 7. Backend updates device level in user document
 
 // Handle device health messages
 export async function handleHealthMessage(topic, message) {

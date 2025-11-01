@@ -1,10 +1,11 @@
-// src/services/controlService.js
+// src/services/controlService.js - FIXED VERSION WITH DEBUGGING
 import { publishToIoT, subscribe } from "../utils/mqttHelper.js";
 import {
   getThingIdByDeviceId,
   waitForSlaveResponseFromMongoDB,
   checkBaseRespondedInMongo,
   checkTankRespondedInMongo,
+  debugSlaveRequests, // NEW
 } from "../services/migratedControlService.js";
 import logger from "../utils/logger.js";
 import { getTopic } from "../config/awsIotConfig.js";
@@ -70,14 +71,15 @@ export async function setting(deviceid, payload) {
 }
 
 /**
- * Send slave request and wait for response via MongoDB
+ * 🔥 FIXED: Send slave request and wait for response via MongoDB
  */
-// Replace the slaveRequest function in controlService.js
-
 export async function slaveRequest(req, res) {
+  const requestStartTime = Date.now();
+  
   logger.info("🚀 SLAVE REQUEST endpoint called", {
     user: req.user?.mobile_number,
     deviceid: req.body?.deviceid,
+    sensor_no: req.body?.sensor_no,
   });
 
   try {
@@ -90,15 +92,21 @@ export async function slaveRequest(req, res) {
       });
     }
 
+    // Get thingid
     const thingid = await getThingIdByDeviceId(deviceid);
     if (!thingid) {
+      logger.error(`❌ No thingid found for deviceid: ${deviceid}`);
       return res.status(404).json({ 
         success: false, 
         error: "DeviceId not found or no associated thing ID" 
       });
     }
 
+    logger.info(`✅ Found thingid: ${thingid} for deviceid: ${deviceid}`);
+
+    // Build topic
     const topic = getTopic("slaveRequest", thingid, "slaveRequest");
+    logger.info(`📤 Publishing to topic: ${topic}`);
     
     // Build payload exactly as device expects
     const payload = {
@@ -117,20 +125,39 @@ export async function slaveRequest(req, res) {
       payload.slaveid = slaveid;
     }
 
+    logger.info(`📦 Payload:`, JSON.stringify(payload, null, 2));
+
     // Publish via Lambda
-    await publishToIoT(topic, payload);
-    
-    logger.info("✅ Slave request published via Lambda");
+    const publishResult = await publishToIoT(topic, payload);
+    logger.info(`✅ Lambda publish result:`, publishResult);
+
+    const publishTime = Date.now() - requestStartTime;
+    logger.info(`⏱️ Publish took ${publishTime}ms`);
+
+    // 🔍 DEBUGGING: Check what's in the database before polling
+    logger.info(`🔍 Checking slave_requests collection BEFORE polling...`);
+    const debugInfo = await debugSlaveRequests(thingid, deviceid);
+    logger.info(`📊 Current slave_requests:`, JSON.stringify(debugInfo, null, 2));
 
     // Wait for response from MongoDB
-    const response = await waitForSlaveResponseFromMongoDB(thingid, 10000);
+    logger.info(`⏳ Waiting for response from MongoDB (thingid: ${thingid})...`);
+    const response = await waitForSlaveResponseFromMongoDB(thingid, 15000); // Increased timeout
+
+    const totalTime = Date.now() - requestStartTime;
+    logger.info(`⏱️ Total request time: ${totalTime}ms`);
 
     if (response) {
+      logger.info(`✅ RESPONSE RECEIVED:`, JSON.stringify(response, null, 2));
+      
       return res.status(200).json({
         success: true,
         message: "Published and response received",
+        timing: {
+          publish_ms: publishTime,
+          total_ms: totalTime
+        },
         data: {
-          status: response.response_data?.status || "success",
+          status: response.response_data?.status || response.status || "success",
           deviceid: response.deviceid,
           thingid: response.thingid,
           channel: response.response_data?.channel 
@@ -139,22 +166,45 @@ export async function slaveRequest(req, res) {
           address_l: response.response_data?.address_l || address_l,
           address_h: response.response_data?.address_h || address_h,
           sensor_no: response.response_data?.sensor_no || sensor_no,
-          slaveid: response.response_data?.slaveid,
-          timestamp: response.inserted_at
+          slaveid: response.response_data?.slaveid || slaveid,
+          timestamp: response.inserted_at || response.completed_at || response.requested_at
         }
       });
     } else {
+      logger.warn(`⚠️ NO RESPONSE RECEIVED after ${totalTime}ms`);
+      
+      // 🔍 DEBUGGING: Check what's in the database after timeout
+      logger.info(`🔍 Checking slave_requests collection AFTER timeout...`);
+      const debugInfoAfter = await debugSlaveRequests(thingid, deviceid);
+      logger.info(`📊 Current slave_requests after timeout:`, JSON.stringify(debugInfoAfter, null, 2));
+      
       return res.status(200).json({
         success: true,
-        message: "Published but no response received",
+        message: "Published but no response received within timeout",
+        timing: {
+          publish_ms: publishTime,
+          total_ms: totalTime
+        },
+        debug: {
+          thingid,
+          deviceid,
+          sensor_no,
+          topic,
+          pending_requests: debugInfoAfter.pending_count,
+          completed_requests: debugInfoAfter.completed_count,
+          recent_requests: debugInfoAfter.recent_requests
+        },
         data: null
       });
     }
   } catch (error) {
     logger.error("❌ Slave request error:", error);
+    logger.error("Stack trace:", error.stack);
+    
     return res.status(500).json({
       success: false,
       error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 }

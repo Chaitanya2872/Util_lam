@@ -1,5 +1,5 @@
 /**
- * Control Service Helper - MongoDB Only
+ * Control Service Helper - MongoDB Only - FIXED VERSION
  * 
  * This service provides helper functions to query MongoDB for device control operations
  */
@@ -9,10 +9,6 @@ import logger from "../utils/logger.js";
 
 const db = () => mongoose.connection.db;
 
-/**
- * Get thingid by deviceid from MongoDB
- * Checks in sensor_metadata collection first, then falls back to users.spaces.devices
- */
 /**
  * Get thingid by deviceid from MongoDB
  * Handles both base and tank devices
@@ -103,52 +99,149 @@ export async function getThingIdByDeviceId(deviceid) {
 }
 
 /**
- * Poll the device_responses collection in MongoDB for a matching thingid
- * Returns the document or null on timeout
+ * 🔥 NEW: Debug function to check slave_requests collection
  */
-/**
- * Wait for slave response for a given thingid.
- * Optimized for Lambda's latest insert format.
- */
-// Replace waitForSlaveResponseFromMongoDB in migratedControlService.js
-
-export async function waitForSlaveResponseFromMongoDB(thingid, timeoutMs = 10000) {
+export async function debugSlaveRequests(thingid, deviceid) {
   const database = db();
-  const coll = database.collection("device_responses");
+  const coll = database.collection("slave_requests");
+  
+  try {
+    const since = new Date(Date.now() - 60000); // Last 1 minute
+    
+    // Get all recent requests for this thing/device
+    const allRecent = await coll.find({
+      $or: [
+        { thingid: thingid },
+        { deviceid: deviceid }
+      ],
+      requested_at: { $gte: since }
+    }).sort({ requested_at: -1 }).limit(10).toArray();
+    
+    // Count pending and completed
+    const pendingCount = await coll.countDocuments({
+      thingid: thingid,
+      status: "pending",
+      requested_at: { $gte: since }
+    });
+    
+    const completedCount = await coll.countDocuments({
+      thingid: thingid,
+      status: "completed",
+      requested_at: { $gte: since }
+    });
+    
+    return {
+      pending_count: pendingCount,
+      completed_count: completedCount,
+      recent_requests: allRecent.map(doc => ({
+        _id: doc._id.toString(),
+        deviceid: doc.deviceid,
+        thingid: doc.thingid,
+        sensor_no: doc.sensor_no,
+        status: doc.status,
+        requested_at: doc.requested_at,
+        completed_at: doc.completed_at,
+        slaveid: doc.slaveid
+      }))
+    };
+  } catch (err) {
+    logger.error(`Error in debugSlaveRequests: ${err.message}`);
+    return {
+      error: err.message,
+      pending_count: 0,
+      completed_count: 0,
+      recent_requests: []
+    };
+  }
+}
+
+/**
+ * 🔥 FIXED: Wait for slave response for a given thingid
+ */
+export async function waitForSlaveResponseFromMongoDB(thingid, timeoutMs = 15000) {
+  const database = db();
+  const coll = database.collection("slave_requests");
   const interval = 500; // Poll every 500ms
   const start = Date.now();
+  let pollCount = 0;
 
-  logger.info(`⏳ Polling for slave response. ThingID: ${thingid}`);
+  logger.info(`⏳ Polling for slave response. ThingID: ${thingid}, Timeout: ${timeoutMs}ms`);
 
   while (Date.now() - start < timeoutMs) {
-    const since = new Date(Date.now() - 15000); // Look for responses in last 15 seconds
-
+    pollCount++;
+    const elapsed = Date.now() - start;
+    
+    // Look back 30 seconds for the request
+    const since = new Date(Date.now() - 30000);
+    
     try {
+      // Query for completed requests
+      const query = {
+        thingid: thingid,
+        requested_at: { $gte: since },
+        status: "completed"
+      };
+      
+      logger.info(`🔍 Poll #${pollCount} (${elapsed}ms elapsed) - Query:`, JSON.stringify(query));
+      
       const doc = await coll.findOne(
-        {
-          thingid,
-          inserted_at: { $gte: since },
-          response_type: 'slave_response'
-        },
-        { sort: { inserted_at: -1 } }
+        query,
+        { sort: { completed_at: -1, requested_at: -1 } }
       );
 
       if (doc) {
-        logger.info(`✅ Slave response found for thingid: ${thingid}`, doc);
-        return doc;
+        logger.info(`✅ Slave response found on poll #${pollCount} after ${elapsed}ms:`, {
+          _id: doc._id.toString(),
+          deviceid: doc.deviceid,
+          thingid: doc.thingid,
+          status: doc.status,
+          completed_at: doc.completed_at,
+          requested_at: doc.requested_at
+        });
+        
+        // Return the document with response data
+        return {
+          ...doc,
+          _id: doc._id.toString(),
+          response_data: doc.response || doc.response_data || {}
+        };
       }
+      
+      // Log every 5th poll to avoid spam
+      if (pollCount % 5 === 0) {
+        logger.info(`⏳ Still waiting... Poll #${pollCount}, ${elapsed}ms elapsed`);
+      }
+      
     } catch (err) {
-      logger.error(`Error polling slave response: ${err.message}`);
+      logger.error(`❌ Error polling slave response on attempt #${pollCount}:`, err.message);
     }
 
     // Wait before next poll
     await new Promise((resolve) => setTimeout(resolve, interval));
   }
 
-  logger.warn(`⏰ Timeout waiting for slave response. ThingID: ${thingid}`);
+  logger.warn(`⏰ Timeout waiting for slave response after ${pollCount} polls (${timeoutMs}ms). ThingID: ${thingid}`);
+  
+  // Final debug: check what's in the database
+  try {
+    const finalCheck = await coll.find({
+      thingid: thingid,
+      requested_at: { $gte: new Date(Date.now() - 30000) }
+    }).toArray();
+    
+    logger.warn(`📊 Final check - Found ${finalCheck.length} requests:`, 
+      finalCheck.map(d => ({
+        status: d.status,
+        requested_at: d.requested_at,
+        completed_at: d.completed_at
+      }))
+    );
+  } catch (err) {
+    logger.error(`Error in final check: ${err.message}`);
+  }
+  
   return null;
 }
-
 
 /**
  * Check if base device responded by looking in tank_readings collection for alive_reply
@@ -196,32 +289,41 @@ export async function checkTankRespondedInMongo(deviceid, sensorNo, timeoutMs = 
   const pollInterval = 1000;
   const start = Date.now();
 
+  logger.info(`⏳ Checking tank response for device: ${deviceid}, sensor: ${sensorNo}`);
+
   while (Date.now() - start < timeoutMs) {
-    const since = new Date(Date.now() - 10000);
+    const since = new Date(Date.now() - 15000); // 15 seconds lookback
     
     try {
       const doc = await coll.findOne(
         {
-          deviceid,
+          deviceid: deviceid,
           sensor_no: sensorNo,
           message_type: "update",
           timestamp: { $gte: since }
         },
-        { sort: { timestamp: -1 } }
+        { 
+          sort: { timestamp: -1 },
+          projection: { _id: 1, deviceid: 1, sensor_no: 1, level: 1, timestamp: 1 }
+        }
       );
 
       if (doc) {
-        logger.info(`✅ Tank device ${deviceid} (${sensorNo}) responded`);
+        logger.info(`✅ Tank device ${deviceid} (${sensorNo}) responded with data:`, {
+          level: doc.level,
+          timestamp: doc.timestamp
+        });
         return true;
       }
     } catch (err) {
-      logger.error(`Error checking tank response: ${err.message}`);
+      logger.error(`❌ Error checking tank response: ${err.message}`);
+      logger.error(err.stack);
     }
 
     await new Promise((resolve) => setTimeout(resolve, pollInterval));
   }
 
-  logger.warn(`Tank device ${deviceid} (${sensorNo}) did not respond within ${timeoutMs}ms`);
+  logger.warn(`⏰ Tank device ${deviceid} (${sensorNo}) did not respond within ${timeoutMs}ms`);
   return false;
 }
 
@@ -263,5 +365,6 @@ export default {
   waitForSlaveResponseFromMongoDB,
   checkBaseRespondedInMongo,
   checkTankRespondedInMongo,
-  getRecentDeviceResponses
+  getRecentDeviceResponses,
+  debugSlaveRequests
 };

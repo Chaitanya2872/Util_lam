@@ -5,11 +5,17 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // Connect to MongoDB
+// src/config/dbconfig.js
+
 const connectDB = async () => {
   try {
     const conn = await mongoose.connect(process.env.MONGO_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
+      maxPoolSize: 10, // ✅ Limit connection pool
+      minPoolSize: 2,
+      socketTimeoutMS: 45000,
+      serverSelectionTimeoutMS: 10000,
     });
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
