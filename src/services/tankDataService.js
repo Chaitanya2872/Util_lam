@@ -2,11 +2,12 @@
 import { getLatestSensorData, getLatestSwitchStatus, TankReading } from './migratedDataService.js';
 import { publishToIoT } from '../utils/mqttHelper.js';
 import { getTopic } from '../config/awsIotConfig.js';
+import { User } from '../config/dbconfig.js';
 import logger from '../utils/logger.js';
 
 /**
  * Fetch latest tank sensor data from MongoDB
- * (IoT messages are published via Lambda, not subscribed locally)
+ * ✅ UPDATED: Now also publishes update request to trigger fresh data
  */
 export async function sensorData(req, res) {
   const { deviceid, sensorNumber } = req.params;
@@ -19,6 +20,68 @@ export async function sensorData(req, res) {
   }
 
   try {
+    // 🔥 NEW: Find the device and publish update request
+    const user = await User.findOne({
+      "spaces.devices.device_id": deviceid
+    });
+
+    if (user) {
+      for (const space of user.spaces) {
+        const device = space.devices.find(d => d.device_id === deviceid);
+        
+        if (device) {
+          // Found the device, now publish update request
+          if (device.device_type === "tank") {
+            // For tank devices, find the parent base device
+            const parentDevice = space.devices.find(d => 
+              d.device_id === device.parent_device_id && 
+              d.switch_no === device.parent_switch_no
+            );
+            
+            if (parentDevice?.thing_name) {
+              try {
+                const updateTopic = getTopic("update", parentDevice.thing_name, "update");
+                const updateMsg = {
+                  deviceid: device.parent_device_id,
+                  device: "tank",
+                  sensor_no: sensorNumber, // Use the sensorNumber from params
+                  slaveid: deviceid,
+                  switch_no: device.parent_switch_no,
+                  request_type: "poll" // Indicate this is a polling request
+                };
+                
+                await publishToIoT(updateTopic, updateMsg);
+                logger.info(`📤 Published update request for tank ${deviceid} via base ${parentDevice.device_id}`, updateMsg);
+              } catch (publishError) {
+                logger.error(`Error publishing update request: ${publishError.message}`);
+                // Continue to fetch data even if publish fails
+              }
+            }
+          } else if (device.device_type === "base" && device.thing_name) {
+            // For base devices
+            try {
+              const updateTopic = getTopic("update", device.thing_name, "update");
+              const updateMsg = {
+                deviceid: deviceid,
+                device: "base",
+                switch_no: sensorNumber, // For base, sensorNumber is switch_no
+                status: device.status || "off",
+                sensor_no: sensorNumber,
+                value: device.status === "on" ? "1" : "0",
+                request_type: "poll"
+              };
+              
+              await publishToIoT(updateTopic, updateMsg);
+              logger.info(`📤 Published update request for base ${deviceid}`, updateMsg);
+            } catch (publishError) {
+              logger.error(`Error publishing update request: ${publishError.message}`);
+            }
+          }
+          break; // Found device, no need to continue
+        }
+      }
+    }
+
     // Fetch latest reading from MongoDB
     const mongoResult = await getLatestSensorData(deviceid, sensorNumber);
 
@@ -54,6 +117,7 @@ export async function sensorData(req, res) {
 
 /**
  * Fetch latest switch status from MongoDB
+ * ✅ UPDATED: Now also publishes update request to trigger fresh data
  */
 export async function switchStatus(req, res) {
   const { deviceid, switchNumber } = req.params;
@@ -66,6 +130,41 @@ export async function switchStatus(req, res) {
   }
 
   try {
+    // 🔥 NEW: Find the device and publish update request
+    const user = await User.findOne({
+      "spaces.devices.device_id": deviceid
+    });
+
+    if (user) {
+      for (const space of user.spaces) {
+        const device = space.devices.find(d => 
+          d.device_id === deviceid && 
+          d.switch_no === switchNumber
+        );
+        
+        if (device && device.thing_name) {
+          try {
+            const updateTopic = getTopic("update", device.thing_name, "update");
+            const updateMsg = {
+              deviceid: deviceid,
+              device: "base",
+              switch_no: switchNumber,
+              status: device.status || "off",
+              sensor_no: switchNumber,
+              value: device.status === "on" ? "1" : "0",
+              request_type: "poll"
+            };
+            
+            await publishToIoT(updateTopic, updateMsg);
+            logger.info(`📤 Published update request for switch ${deviceid}/${switchNumber}`, updateMsg);
+          } catch (publishError) {
+            logger.error(`Error publishing update request: ${publishError.message}`);
+          }
+          break;
+        }
+      }
+    }
+
     // Fetch latest switch status from MongoDB
     const mongoResult = await getLatestSwitchStatus(deviceid, switchNumber);
 

@@ -4,12 +4,10 @@ import { getTopic, AWS_IOT_CONFIG } from "../config/awsIotConfig.js";
 import logger from "../utils/logger.js";
 import { trace, context } from "@opentelemetry/api";
 
-
-
-
+// ✅ FIXED: Use publishToIoT instead of undefined publish
 async function safePublish(topic, message) {
   try {
-    publish(topic, message);
+    await publishToIoT(topic, message);
     logger.info(`✅ MQTT Published to ${topic}`, message);
   } catch (err) {
     logger.error(`❌ MQTT publish failed for ${topic}: ${err.message}`);
@@ -24,7 +22,6 @@ async function checkDeviceExistsGlobally(deviceId, thingName = null) {
     ]
   };
 
-  // If thing_name is provided, also check for it
   if (thingName) {
     query.$or.push({ "spaces.devices.thing_name": thingName });
   }
@@ -32,7 +29,6 @@ async function checkDeviceExistsGlobally(deviceId, thingName = null) {
   const existingUser = await User.findOne(query);
   
   if (existingUser) {
-    // Find the specific device and space details
     for (const space of existingUser.spaces) {
       const device = space.devices.find(d => 
         d.device_id === deviceId || (thingName && d.thing_name === thingName)
@@ -51,7 +47,7 @@ async function checkDeviceExistsGlobally(deviceId, thingName = null) {
   return { exists: false };
 }
 
-// Update the getSpaceDevices function to include sensor_no
+// ✅ UPDATED: Publish update messages when getting devices
 export async function getSpaceDevices(mobileNumber, spaceId) {
   const user = await User.findOne({ mobile_number: mobileNumber });
   if (!user) {
@@ -63,15 +59,64 @@ export async function getSpaceDevices(mobileNumber, spaceId) {
     throw new Error("Space not found");
   }
 
-  // Transform the devices to include space information and sensor_no
-  const devicesWithSpaceInfo = space.devices.map((device) => ({
-    ...device.toObject(),
-    space_id: space._id,
-    space_name: space.space_name,
-    // Add sensor_no field - for tanks use slave_name, for base devices use switch_no
-    sensor_no: device.device_type === "tank" ? device.slave_name : device.switch_no,
-  }));
+  const devicesWithSpaceInfo = space.devices.map((device) => {
+    const deviceObj = device.toObject();
+    return {
+      ...deviceObj,
+      space_id: space._id,
+      space_name: space.space_name,
+      sensor_no: device.device_type === "tank" ? device.slave_name : device.switch_no,
+    };
+  });
 
+  // 🔥 NEW: Publish update requests for all devices with thing_name
+  for (const device of devicesWithSpaceInfo) {
+    if (device.thing_name) {
+      try {
+        const updateTopic = getTopic("update", device.thing_name, "update");
+        
+        if (device.device_type === "base") {
+          // Request update for base device
+          const updateMsg = {
+            deviceid: device.device_id,
+            device: "base",
+            switch_no: device.switch_no,
+            status: device.status || "off",
+            sensor_no: device.switch_no,
+            value: device.status === "on" ? "1" : "0",
+            request_type: "poll" // Indicate this is a polling request
+          };
+          await safePublish(updateTopic, updateMsg);
+          logger.info(`📤 Published update request for base device: ${device.device_id}`);
+        } else if (device.device_type === "tank") {
+          // Request update for tank device through parent
+          const parentDevice = space.devices.find(d => 
+            d.device_id === device.parent_device_id && 
+            d.switch_no === device.parent_switch_no
+          );
+          
+          if (parentDevice?.thing_name) {
+            const updateMsg = {
+              deviceid: device.parent_device_id,
+              device: "tank",
+              sensor_no: device.slave_name,
+              slaveid: device.device_id,
+              switch_no: device.parent_switch_no,
+              request_type: "poll" // Indicate this is a polling request
+            };
+            await safePublish(updateTopic, updateMsg);
+            logger.info(`📤 Published update request for tank device: ${device.device_id} via ${parentDevice.device_id}`);
+          }
+        }
+      } catch (err) {
+        logger.error(`Error publishing update for device ${device.device_id}: ${err.message}`);
+        // Continue with other devices even if one fails
+      }
+    }
+  }
+
+  logger.info(`Retrieved ${devicesWithSpaceInfo.length} devices for space ${spaceId}`);
+  
   return devicesWithSpaceInfo || [];
 }
 
@@ -93,7 +138,6 @@ export async function getAllUserDevices(mobileNumber, userId) {
         ...device.toObject(),
         space_id: space._id,
         space_name: space.space_name,
-        // Add sensor_no field
         sensor_no: device.device_type === "tank" ? device.slave_name : device.switch_no,
       }));
 
@@ -104,8 +148,6 @@ export async function getAllUserDevices(mobileNumber, userId) {
   return allDevices;
 }
 
-// Get a specific device by ID
-// Update getDeviceById to include sensor_no
 export async function getDeviceById(mobileNumber, spaceId, deviceId) {
   const user = await User.findOne({ mobile_number: mobileNumber });
   if (!user) {
@@ -122,19 +164,16 @@ export async function getDeviceById(mobileNumber, spaceId, deviceId) {
     throw new Error("Device not found");
   }
 
-  // Add space information and sensor_no to the device
   const deviceWithSpaceInfo = {
     ...device.toObject(),
     space_id: space._id,
     space_name: space.space_name,
-    // Add sensor_no field
     sensor_no: device.device_type === "tank" ? device.slave_name : device.switch_no,
   };
 
   return deviceWithSpaceInfo;
 }
 
-// Check if device can be transferred or needs to be removed first
 export async function checkDeviceAvailability(deviceId, thingName = null) {
   const result = await checkDeviceExistsGlobally(deviceId, thingName);
   
@@ -154,8 +193,6 @@ export async function checkDeviceAvailability(deviceId, thingName = null) {
   return { available: true };
 }
 
-// Add a base device to a space
-// deviceService.js
 export async function addDevice(mobileNumber, spaceId, deviceData) {
   const span = trace.getSpan(context.active());
   const traceInfo = span ? span.spanContext() : {};
@@ -173,7 +210,6 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
       throw new Error("Space not found");
     }
 
-    // Check for global duplicate device
     const globalCheck = await checkDeviceExistsGlobally(deviceData.device_id, deviceData.thing_name);
     if (globalCheck.exists) {
       logger.warn("Device already registered", {
@@ -189,19 +225,16 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
       }
     }
 
-    // Validate WiFi creds if WiFi mode
     if (deviceData.connection_type === "wifi") {
       if (!deviceData.ssid || !deviceData.password) {
         throw new Error("SSID and password are required for WiFi devices");
       }
     }
 
-    // Set default thing_name if base and not provided
     if (!deviceData.thing_name && deviceData.device_type === "base") {
       deviceData.thing_name = deviceData.device_id;
     }
 
-    // Auto assign switch_no if base device
     if (deviceData.device_type === "base") {
       const currentDevices = user.spaces[spaceIndex].devices;
       const existingSwitches = currentDevices
@@ -221,18 +254,14 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
       });
     }
 
-    // Create BM1 and BM2 clones
     const bm1Device = { ...deviceData, switch_no: "BM1", status: "off" };
     const bm2Device = { ...deviceData, switch_no: "BM2", status: "off" };
 
-    // Push to DB
     user.spaces[spaceIndex].devices.push(bm1Device, bm2Device);
     await user.save();
 
-    // ---------- MQTT PUBLISH LOGIC STARTS HERE ---------- //
     if (deviceData.connection_type === "wifi" && deviceData.thing_name) {
       try {
-        // 1️⃣ CONFIG TOPIC
         const configTopic = getTopic("config", deviceData.thing_name, "config");
         const configMsg = {
           deviceid: deviceData.device_id,
@@ -242,9 +271,7 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
           ota_host: ""
         };
         await safePublish(configTopic, configMsg);
-        logger.info("✅ Published MQTT Config", { topic: configTopic, configMsg });
 
-        // 2️⃣ ALIVE_REPLY TOPIC
         const aliveTopic = getTopic("alive", deviceData.thing_name, "alive");
         const aliveMsg = {
           deviceid: deviceData.device_id,
@@ -256,9 +283,7 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
           firmware_version: deviceData.firmware_version || "2.1.0"
         };
         await safePublish(aliveTopic, aliveMsg);
-        logger.info("✅ Published MQTT Alive Reply", { topic: aliveTopic, aliveMsg });
 
-        // 3️⃣ HEALTH_REPLY TOPIC
         const healthTopic = getTopic("health", deviceData.thing_name, "health");
         const healthMsg = {
           deviceid: deviceData.device_id,
@@ -271,9 +296,7 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
           chip_frequency: "240MHz"
         };
         await safePublish(healthTopic, healthMsg);
-        logger.info("✅ Published MQTT Health Reply", { topic: healthTopic, healthMsg });
 
-        // 4️⃣ UPDATE TOPIC (Initial Device Status)
         const updateTopic = getTopic("update", deviceData.thing_name, "update");
         const updateMsg = {
           deviceid: deviceData.device_id,
@@ -284,13 +307,11 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
           value: "0"
         };
         await safePublish(updateTopic, updateMsg);
-        logger.info("✅ Published MQTT Update", { topic: updateTopic, updateMsg });
 
       } catch (mqttError) {
         logger.error("❌ MQTT publish error", { error: mqttError.message, traceId: traceInfo.traceId });
       }
     }
-    // ---------- MQTT PUBLISH LOGIC ENDS HERE ---------- //
 
     logger.info("Base device added successfully", {
       device_id: deviceData.device_id,
@@ -309,10 +330,6 @@ export async function addDevice(mobileNumber, spaceId, deviceData) {
   }
 }
 
-// Add a tank device to a space and connect to base device
-// Updated addTankDevice function in deviceService.js
-// Updated addTankDevice function in deviceService.js
-// deviceService.js
 export async function addTankDevice(
   mobileNumber,
   spaceId,
@@ -333,7 +350,6 @@ export async function addTankDevice(
       throw new Error("Space not found");
     }
 
-    // Find base device
     const baseDevice = user.spaces[spaceIndex].devices.find(
       (device) =>
         device.device_id === baseDeviceId &&
@@ -347,12 +363,10 @@ export async function addTankDevice(
       );
     }
 
-    // Validate switch_no
     if (!["BM1", "BM2"].includes(switchNo)) {
       throw new Error("Switch number must be either 'BM1' or 'BM2'");
     }
 
-    // Find connected tanks for this base switch
     const connectedTanks = user.spaces[spaceIndex].devices.filter(
       (device) =>
         device.device_type === "tank" &&
@@ -367,11 +381,11 @@ export async function addTankDevice(
       );
     }
 
-    // Assign available slave name (TM1/TM2)
     const slaveMapping = {
       BM1: ["TM1", "TM2"],
-      BM2: ["TM1", "TM2"],
+      BM2: ["TM3", "TM4"],
     };
+    
     const usedSlaveNames = connectedTanks.map((tank) => tank.slave_name);
     const availableSlaveNames = slaveMapping[switchNo].filter(
       (s) => !usedSlaveNames.includes(s)
@@ -385,10 +399,9 @@ export async function addTankDevice(
     tankData.slave_name = autoAssignedSlaveName;
 
     logger.info(
-      `Auto-assigned slave name: ${autoAssignedSlaveName} for tank: ${tankData.device_id}`
+      `Auto-assigned slave name: ${autoAssignedSlaveName} for tank: ${tankData.device_id} on switch ${switchNo}`
     );
 
-    // Global device check
     const globalCheck = await checkDeviceExistsGlobally(tankData.device_id);
     if (globalCheck.exists) {
       if (globalCheck.user.mobile_number === mobileNumber) {
@@ -402,18 +415,15 @@ export async function addTankDevice(
       }
     }
 
-    // Set tank properties
     tankData.device_type = "tank";
     tankData.parent_device_id = baseDeviceId;
     tankData.parent_switch_no = switchNo;
     tankData.level = 0;
 
-    // Default connection type if not provided
     if (!tankData.connection_type) {
       tankData.connection_type = "without_wifi";
     }
 
-    // Default fields for non-Wi-Fi tanks
     if (tankData.connection_type === "without_wifi") {
       tankData.channel = tankData.channel || "24";
       tankData.address_l = tankData.address_l || "0x01";
@@ -422,7 +432,6 @@ export async function addTankDevice(
       tankData.capacity = tankData.capacity || 1000;
     }
 
-    // Save to DB
     user.spaces[spaceIndex].devices.push(tankData);
     await user.save();
 
@@ -431,21 +440,17 @@ export async function addTankDevice(
         user.spaces[spaceIndex].devices.length - 1
       ];
 
-    // ---------- MQTT PUBLISH SECTION ---------- //
     if (baseDevice.thing_name) {
       try {
-        // ✅ Fixed: baseDevice instead of basedevice
         const slaveRequestTopic = getTopic("slaveRequest", baseDevice.thing_name, "slaveRequest");
 
-        // Build payload based on connection type
         let slaveRequestMessage = {
           deviceid: baseDeviceId,
-          sensor_no: autoAssignedSlaveName, // TM1, TM2
-          slaveid: tankData.device_id, // Unique tank device id
+          sensor_no: autoAssignedSlaveName,
+          slaveid: tankData.device_id,
         };
 
         if (tankData.connection_type === "without_wifi") {
-          // Mode 3 = without Wi-Fi
           slaveRequestMessage = {
             ...slaveRequestMessage,
             mode: 3,
@@ -456,7 +461,6 @@ export async function addTankDevice(
             capacity: parseInt(tankData.capacity) || 1000,
           };
         } else if (tankData.connection_type === "wifi") {
-          // Mode 1 = Wi-Fi mode
           slaveRequestMessage = {
             ...slaveRequestMessage,
             mode: 1,
@@ -467,7 +471,6 @@ export async function addTankDevice(
           };
         }
 
-        // Publish MQTT message via Lambda
         await publishToIoT(slaveRequestTopic, slaveRequestMessage);
 
         logger.info("✅ Published MQTT Slave Request via Lambda", {
@@ -479,23 +482,48 @@ export async function addTankDevice(
         logger.error(
           `❌ Error sending MQTT slave request: ${mqttError.message}`
         );
-        // Don't throw - tank is already saved in DB
       }
     } else {
       logger.warn(`⚠️ Base device ${baseDeviceId} has no thing_name, skipping MQTT publish`);
     }
-    // ---------- END MQTT PUBLISH SECTION ---------- //
 
-    logger.info(`✅ Tank device added successfully: ${tankData.device_id}`);
+    logger.info(`✅ Tank device added successfully: ${tankData.device_id} with slave_name: ${autoAssignedSlaveName}`);
 
-    return newTankDevice;
+    const responseDevice = {
+      ...newTankDevice.toObject(),
+      space_id: user.spaces[spaceIndex]._id,
+      space_name: user.spaces[spaceIndex].space_name,
+      sensor_no: autoAssignedSlaveName,
+    };
+    
+    return responseDevice;
   } catch (error) {
     logger.error(`❌ Error adding tank device: ${error.message}`);
     throw error;
   }
 }
 
-// Transfer device to another space within the same account
+export async function debugTankDevice(mobileNumber, spaceId, deviceId) {
+  const user = await User.findOne({ mobile_number: mobileNumber });
+  if (!user) return null;
+  
+  const space = user.spaces.find(s => s._id.toString() === spaceId);
+  if (!space) return null;
+  
+  const device = space.devices.find(d => d.device_id === deviceId);
+  if (!device) return null;
+  
+  logger.info('🔍 Device in DB:', {
+    device_id: device.device_id,
+    device_type: device.device_type,
+    slave_name: device.slave_name,
+    parent_switch_no: device.parent_switch_no,
+    all_fields: Object.keys(device.toObject())
+  });
+  
+  return device.toObject();
+}
+
 export async function transferDevice(mobileNumber, fromSpaceId, toSpaceId, deviceId) {
   const user = await User.findOne({ mobile_number: mobileNumber });
   if (!user) {
@@ -513,7 +541,6 @@ export async function transferDevice(mobileNumber, fromSpaceId, toSpaceId, devic
     throw new Error("Source or destination space not found");
   }
 
-  // Find the device in the source space
   const deviceIndex = user.spaces[fromSpaceIndex].devices.findIndex(
     (device) => device.device_id === deviceId
   );
@@ -524,7 +551,6 @@ export async function transferDevice(mobileNumber, fromSpaceId, toSpaceId, devic
 
   const device = user.spaces[fromSpaceIndex].devices[deviceIndex];
 
-  // If it's a base device, check for connected tank devices
   if (device.device_type === "base") {
     const connectedTanks = user.spaces[fromSpaceIndex].devices.filter(
       (d) => d.device_type === "tank" && d.parent_device_id === deviceId
@@ -537,13 +563,9 @@ export async function transferDevice(mobileNumber, fromSpaceId, toSpaceId, devic
     }
   }
 
-  // Remove device from source space
   user.spaces[fromSpaceIndex].devices.splice(deviceIndex, 1);
-
-  // Add device to destination space
   user.spaces[toSpaceIndex].devices.push(device);
 
-  // Clean up any setups in the source space that used this device
   if (user.spaces[fromSpaceIndex].setups) {
     for (let i = 0; i < user.spaces[fromSpaceIndex].setups.length; i++) {
       const setup = user.spaces[fromSpaceIndex].setups[i];
@@ -579,7 +601,6 @@ export async function transferDevice(mobileNumber, fromSpaceId, toSpaceId, devic
   };
 }
 
-// Delete a device from a space
 export async function deleteDevice(mobileNumber, spaceId, deviceId) {
   const user = await User.findOne({ mobile_number: mobileNumber });
   if (!user) {
@@ -593,7 +614,6 @@ export async function deleteDevice(mobileNumber, spaceId, deviceId) {
     throw new Error("Space not found");
   }
 
-  // Find the device to delete
   const deviceIndex = user.spaces[spaceIndex].devices.findIndex(
     (device) => device.device_id === deviceId
   );
@@ -603,7 +623,6 @@ export async function deleteDevice(mobileNumber, spaceId, deviceId) {
 
   const device = user.spaces[spaceIndex].devices[deviceIndex];
 
-  // Check if this is a base device with connected tank devices
   if (device.device_type === "base") {
     const connectedTanks = user.spaces[spaceIndex].devices.filter(
       (d) => d.device_type === "tank" && d.parent_device_id === deviceId
@@ -616,51 +635,40 @@ export async function deleteDevice(mobileNumber, spaceId, deviceId) {
     }
   }
 
-  // Remove the device
   user.spaces[spaceIndex].devices.splice(deviceIndex, 1);
 
-  // If this device was used in any setups, remove or disable those setups
   if (user.spaces[spaceIndex].setups) {
-    // Find setups that use this device as a condition
     for (let i = 0; i < user.spaces[spaceIndex].setups.length; i++) {
       const setup = user.spaces[spaceIndex].setups[i];
 
-      // Check if this device is used as a condition device
       if (setup.condition.device_id === deviceId) {
-        // Remove the setup entirely
         user.spaces[spaceIndex].setups.splice(i, 1);
-        i--; // Adjust index since we removed an item
+        i--;
         continue;
       }
 
-      // Check if this device is used in actions
       if (setup.condition.actions) {
         const actionIndex = setup.condition.actions.findIndex(
           (action) => action.device_id === deviceId
         );
 
         if (actionIndex !== -1) {
-          // Remove this action
           setup.condition.actions.splice(actionIndex, 1);
 
-          // If no actions remain, remove the entire setup
           if (setup.condition.actions.length === 0) {
             user.spaces[spaceIndex].setups.splice(i, 1);
-            i--; // Adjust index since we removed an item
+            i--;
           }
         }
       }
     }
   }
 
-  // Save the updated user document
   await user.save();
 
   return { success: true, message: "Device deleted successfully" };
 }
 
-// Update device status (for base devices)
-// deviceService.js
 export async function updateDeviceStatus(
   mobileNumber,
   spaceId,
@@ -701,7 +709,6 @@ export async function updateDeviceStatus(
     user.spaces[spaceIndex].devices[deviceIndex].last_updated = new Date();
     await user.save();
 
-    // MQTT PUBLISH SECTION
     if (device.thing_name) {
       try {
         const controlTopic = getTopic("control", device.thing_name, "control");
@@ -738,13 +745,12 @@ export async function updateDeviceStatus(
       }
     }
 
-    // Return updated device info with sensor_no
     return {
       ...device.toObject(),
       status,
       space_id: user.spaces[spaceIndex]._id,
       space_name: user.spaces[spaceIndex].space_name,
-      sensor_no: device.switch_no, // Add sensor_no for base device
+      sensor_no: device.switch_no,
     };
   } catch (error) {
     logger.error(`Error updating device status: ${error.message}`);
@@ -752,17 +758,13 @@ export async function updateDeviceStatus(
   }
 }
 
-
-// deviceService.js
 export async function resetDevice(mobileNumber, spaceId, deviceId, slaveNo, slaveId = "") {
   try {
-    // Fetch user
     const user = await User.findOne({ mobile_number: mobileNumber });
     if (!user) {
       throw new Error("User not found");
     }
 
-    // Find the space
     const spaceIndex = user.spaces.findIndex(
       (space) => space._id.toString() === spaceId
     );
@@ -770,7 +772,6 @@ export async function resetDevice(mobileNumber, spaceId, deviceId, slaveNo, slav
       throw new Error("Space not found");
     }
 
-    // Find the base or slave device
     const device = user.spaces[spaceIndex].devices.find(
       (d) => d.device_id === deviceId
     );
@@ -778,30 +779,25 @@ export async function resetDevice(mobileNumber, spaceId, deviceId, slaveNo, slav
       throw new Error("Device not found");
     }
 
-    // Determine thing_name (required for MQTT topic)
     const thingName = device.thing_name || device.device_id;
     if (!thingName) {
       throw new Error("Missing thingName or deviceId for MQTT topic");
     }
 
-    // ✅ Construct MQTT topic
     const resetTopic = `mqtt/device/${thingName}/reset`;
 
-    // ✅ Construct MQTT payload
     const resetMessage = {
       deviceid: device.device_id,
-      slave_no: slaveNo,   // e.g., "TM1"
-      slaveid: slaveId     // e.g., "IOTIQTM1_A1024001" or empty to reset whole device
+      slave_no: slaveNo,
+      slaveid: slaveId
     };
 
-    // ✅ Publish MQTT reset command
-    publish(resetTopic, resetMessage);
+    await publishToIoT(resetTopic, resetMessage);
     logger.info("✅ Published MQTT Reset Command", {
       topic: resetTopic,
       message: resetMessage,
     });
 
-    // Optionally, you can mark the device as pending reset in DB
     device.reset_requested = true;
     device.last_updated = new Date();
     await user.save();
