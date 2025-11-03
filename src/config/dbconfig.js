@@ -197,6 +197,7 @@ const setupSchema = new mongoose.Schema({
 });
 
 // Device Schema - Updated with properties for IoT integration
+// Device Schema - Updated with slave_name and parent_switch_no for tank devices
 const deviceSchema = new mongoose.Schema(
   {
     device_id: {
@@ -213,13 +214,13 @@ const deviceSchema = new mongoose.Schema(
       required: [true, "Device name is required"],
     },
 
-  switch_no: {
-  type: String,
-  enum: ["BM1", "BM2"],
-  required: function () {
-    return this.device_type === "base";
-  }
-},
+    switch_no: {
+      type: String,
+      enum: ["BM1", "BM2"],
+      required: function () {
+        return this.device_type === "base";
+      }
+    },
 
     connection_type: {
       type: String,
@@ -265,6 +266,46 @@ const deviceSchema = new mongoose.Schema(
         return this.device_type === "tank"; // Tank models require a parent (base model)
       },
     },
+    // ✅ NEW: Parent switch number for tank devices
+    parent_switch_no: {
+      type: String,
+      enum: ["BM1", "BM2"],
+      required: function () {
+        return this.device_type === "tank";
+      },
+      validate: {
+        validator: function(value) {
+          if (this.device_type === "tank") {
+            return ["BM1", "BM2"].includes(value);
+          }
+          return true;
+        },
+        message: "Parent switch number must be either 'BM1' or 'BM2' for tank devices"
+      }
+    },
+    // ✅ NEW: Slave name for tank devices (TM1, TM2, TM3, TM4)
+    slave_name: {
+      type: String,
+      enum: ["TM1", "TM2", "TM3", "TM4"],
+      required: function () {
+        return this.device_type === "tank";
+      },
+      validate: {
+        validator: function(value) {
+          if (this.device_type === "tank") {
+            // BM1 can only have TM1, TM2
+            // BM2 can only have TM3, TM4
+            if (this.parent_switch_no === "BM1") {
+              return ["TM1", "TM2"].includes(value);
+            } else if (this.parent_switch_no === "BM2") {
+              return ["TM3", "TM4"].includes(value);
+            }
+          }
+          return true;
+        },
+        message: "Invalid slave_name for the given parent_switch_no. BM1 uses TM1/TM2, BM2 uses TM3/TM4"
+      }
+    },
     channel: {
       type: String,
       required: function () {
@@ -307,12 +348,6 @@ const deviceSchema = new mongoose.Schema(
         );
       },
     },
-    address_h: {
-      type: String,
-      required: function () {
-        return this.device_type === "tank";
-      },
-    },
     thing_name: {
       type: String, // AWS IoT thing name
       required: function () {
@@ -328,6 +363,11 @@ const deviceSchema = new mongoose.Schema(
       default: Date.now,
     },
     firmware_version: String,
+    // ✅ NEW: Reset requested flag
+    reset_requested: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );
