@@ -84,6 +84,7 @@ app.use("/", setupRoutes);
 app.use('/', traceRoutes); // or app.use('/traces', traceRoutes);
 
 // ✅ NEW: Serve logs from MongoDB for the dashboard
+//test commit at 3:24 pm on 11/4
 app.get("/logs", async (req, res) => {
   try {
     const client = new MongoClient(process.env.MONGO_URI);
